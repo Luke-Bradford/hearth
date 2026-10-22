@@ -232,3 +232,7 @@ and `/api/setup/credentials` (only from the computer running Hearth).
 ## Tests
 
 `python -m unittest discover -s tests -t .`
+
+## License
+
+MIT - see [LICENSE](LICENSE). The bundled `chart.umd.js` is [Chart.js](https://www.chartjs.org/), also MIT, under its own notice.
