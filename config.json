@@ -1,0 +1,4 @@
+{
+  "_about": "Every setting is optional - defaults live in hearth/config.py. The router, devices, mesh/extender groups and route to the ISP are discovered automatically; nothing here describes a particular home.",
+  "web_port": 8080
+}

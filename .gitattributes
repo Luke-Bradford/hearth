@@ -1,0 +1,3 @@
+# cmd reads batch files with CRLF: goto and labels can misfire in LF-only files
+*.bat text eol=crlf
+*.cmd text eol=crlf

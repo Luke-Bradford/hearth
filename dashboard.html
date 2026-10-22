@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hearth</title>
+<link rel="icon" href="data:,">
+<script src="/chart.umd.js"></script>
+<!-- the theme before the first paint, so a light-theme user never sees a dark flash -->
+<script>{let t=null;try{t=localStorage.getItem("hearth_theme")}catch(e){}   // blocked storage: still follow the system
+document.documentElement.dataset.theme=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark"}</script>
+<style>
+/* every colour is a token (tests/test_contrast.py checks both themes against WCAG). Dark is the
+   default; the light set applies when <html data-theme="light">, which the script in <head> sets
+   from the toggle (remembered) or, with no choice made, the system's preference.
+   --s1..--s6: the series palette (blue, purple, teal, orange, pink, grey) - never a status colour */
+:root{color-scheme:dark;--bg:#0f1216;--panel:#171b21;--inset:#0f1216;--line:#262c35;--text:#e6e9ee;--muted:#8b94a3;
+  --good:#3fb950;--warn:#d29922;--bad:#f85149;--none:#6e7681;--accent:#e8915a;
+  --s1:#58a6ff;--s2:#bc8cff;--s3:#39c5cf;--s4:#e8915a;--s5:#f778ba;--s6:#a5b0bd;--s-other:#7d8590;
+  --shadow:rgba(0,0,0,.35);--scrim:rgba(0,0,0,.5);--gap:16px}
+:root[data-theme="light"]{color-scheme:light;--bg:#f6f8fa;--panel:#ffffff;--inset:#f6f8fa;--line:#d0d7de;--text:#1f2328;--muted:#59636e;
+  --good:#1a7f37;--warn:#9a6700;--bad:#cf222e;--none:#818b98;--accent:#bc4c00;
+  --s1:#0969da;--s2:#8250df;--s3:#1b7c83;--s4:#bc4c00;--s5:#bf3989;--s6:#57606a;--s-other:#818b98;
+  --shadow:rgba(31,35,40,.15);--scrim:rgba(31,35,40,.4)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+/* header: brand | fixed status cells | ranges - each cell fenced, so a longer value can't move the others */
+header{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px var(--gap);align-items:center;padding:12px var(--gap);border-bottom:1px solid var(--line)}
+.status{display:grid;grid-template-columns:150px minmax(0,1fr) minmax(0,1.4fr);gap:0;min-width:0}
+.status .cell{padding:0 14px;border-left:1px solid var(--line);min-width:0}
+.status .cell>span{display:block;color:var(--muted);font-size:11px;line-height:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status .cell b{display:block;font-size:13px;font-weight:600;color:var(--text);line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status .cell b small{color:var(--muted);font-weight:400}
+@media(max-width:900px){header{grid-template-columns:1fr auto}.status{grid-column:1/-1;grid-row:2;grid-template-columns:110px minmax(0,1fr)}
+  .status .cell:nth-child(3){grid-column:1/-1;border-left:0;padding:6px 0 0}.status .cell:first-child{border-left:0;padding-left:0}}
+h1{font-size:18px;margin:0;letter-spacing:.02em}
+h1 span{color:var(--accent)}
+h2{font-size:15px;margin:0}
+main{padding:var(--gap);max-width:1400px;margin:0 auto;display:grid;gap:var(--gap)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:var(--gap);min-width:0}
+.ph{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.ranges{display:flex;gap:6px;flex-wrap:wrap}
+.ranges button,.btn{background:transparent;border:1px solid var(--line);color:var(--muted);padding:4px 10px;border-radius:6px;cursor:pointer;font:inherit}
+.ranges button.on{border-color:var(--accent);color:var(--text);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.btn{color:var(--text)}.btn:hover{border-color:var(--accent)}.btn:disabled{opacity:.5;cursor:default}
+.muted{color:var(--muted)}.small{font-size:12px}
+/* status by shape, word and colour - never colour alone: good ● "good", warn ▲ "fair", bad ■ "poor",
+   no data ○ "no data". The word is a visually hidden ::before, so a screen reader says it where only
+   the shape shows; the classes are the ones LV (dashboard.js) maps each level to */
+.sr-only,.dot::before,.tag::after{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.dot{position:relative;display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle;
+  background:transparent;box-shadow:inset 0 0 0 1.5px var(--none)}
+.dot.good{background:var(--good);box-shadow:none}.dot.good::before{content:"good"}
+.dot.warn{background:var(--warn);box-shadow:none;border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}.dot.warn::before{content:"fair"}
+.dot.bad{background:var(--bad);box-shadow:none;border-radius:1px}.dot.bad::before{content:"poor"}
+.dot.nodata::before{content:"no data"}
+.dot.asleep{background:transparent;box-shadow:inset 0 0 0 1.5px var(--good)}.dot.asleep::before{content:"asleep"}
+.dot.self{background:var(--accent);box-shadow:none}.dot.self::before{content:"this computer"}
+/* map */
+.mapscroll{overflow-x:auto}
+#map{display:block}
+#map .edge{fill:none;stroke-linecap:round;opacity:.85}
+#map .node{cursor:pointer}
+#map .node .mk{stroke:var(--panel);stroke-width:2}#map .node .mk.ring{stroke:var(--c)}
+#map .node.sel .mk{stroke:var(--accent);stroke-width:3}
+#map .node:focus{outline:none}#map .node:focus-visible .mk{stroke:var(--accent);stroke-width:3}
+#map text{fill:var(--text);font-size:13px}
+#map text.sub{fill:var(--muted);font-size:11px}
+#map text.area{font-weight:600}
+.good{--c:var(--good)}.warn{--c:var(--warn)}.bad{--c:var(--bad)}.nodata{--c:var(--none)}.self{--c:var(--accent)}
+/* side panel: docked on the right of a wide screen (non-modal), full-screen and modal on a phone */
+#panel{position:fixed;inset:0 0 0 auto;margin:0;width:min(380px,100vw);height:100%;max-height:100%;max-width:100vw;
+  box-sizing:border-box;padding:16px;border:0;border-left:1px solid var(--line);background:var(--panel);color:var(--text);
+  overflow:auto;z-index:20;box-shadow:-8px 0 24px var(--shadow)}
+#panel::backdrop{background:var(--scrim)}
+@media(max-width:700px){#panel{width:100vw;border-left:0}}
+#panel-close{float:right;background:none;border:1px solid var(--line);border-radius:6px;color:var(--text);cursor:pointer;
+  font:inherit;padding:2px 8px;margin:0 0 8px 8px}
+#panel-close:focus-visible{outline:2px solid var(--accent)}
+.detail{min-width:0}
+.detail h3{margin:0 0 8px;font-size:15px}
+a.itemlink{color:inherit;text-decoration:none}a.itemlink:hover,a.itemlink:focus-visible{text-decoration:underline}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-variant-numeric:tabular-nums}
+.kv dt{color:var(--muted);font-size:12px;align-self:center}.kv dd{margin:0}
+.legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+/* charts and tables */
+.chartbox{position:relative;height:260px}
+.chartbox.small{height:120px}
+.charthead{color:var(--muted);font-size:12px;margin:10px 0 2px}
+.pick{display:flex;gap:6px 16px;flex-wrap:wrap;margin-bottom:4px}
+.pickitem{display:inline-flex;align-items:center;gap:4px}
+.pickitem label{color:var(--text);display:inline-flex;align-items:center;gap:5px}
+.pickitem i{display:inline-block;width:12px;height:12px;border-radius:2px}
+.pickonly{background:none;border:1px solid var(--line);border-radius:999px;color:var(--muted);cursor:pointer;font:inherit;font-size:11px;padding:0 6px}
+.pickonly:hover{color:var(--accent);border-color:var(--accent)}.pickonly:disabled{color:var(--accent);border-color:var(--accent);cursor:default}
+.sum{display:flex;gap:6px 22px;flex-wrap:wrap;margin-bottom:10px;font-variant-numeric:tabular-nums}
+.sum span{color:var(--muted);font-size:12px}.sum b{color:var(--text);font-size:14px;margin-left:4px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th:first-child,td:first-child{padding-left:0}
+th{color:var(--muted);font-weight:500;font-size:12px;position:sticky;top:0;background:var(--panel)}
+td.num,th.num{text-align:right}
+/* phones: every table in a tab becomes stacked cards - the first column as the card's heading, the
+   rest as "label: value" rows (labels from the header, set by labelTables in dashboard.js) - and
+   nothing scrolls inside the page vertically, so page scrolling is never trapped */
+@media(max-width:700px){
+  .scroll{max-height:none!important;overflow:visible}   /* !important: some boxes set an inline max-height */
+  .tabpanel table,.tabpanel tbody,.tabpanel tr,.tabpanel td{display:block;width:auto}
+  .tabpanel thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .tabpanel tr{border-bottom:1px solid var(--line);padding:8px 0}
+  /* the label floats left and the value stays one inline run on the right (flex would pull a
+     value's parts apart and squash its tags) */
+  .tabpanel td{padding:2px 0;border:0;text-align:right}
+  .tabpanel td::before{content:attr(data-label);float:left;margin-right:12px;color:var(--muted);font-size:12px;text-align:left}
+  .tabpanel td::after{content:"";display:table;clear:both}
+  .tabpanel td:first-child,.tabpanel td[colspan]{display:block;text-align:left;font-weight:600}
+  .tabpanel td[colspan]{font-weight:400}
+  .tabpanel td:first-child::before,.tabpanel td[colspan]::before,.tabpanel td:not([data-label])::before{content:none}
+  .tabpanel td:empty{display:none}   /* a blank cell (a unit's second band row, no area) is no row at all */
+}
+.scroll{max-height:440px;overflow:auto}
+.tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:12px;border:1px solid var(--line)}
+.tag.bad{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}.tag.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent)}.tag.good{color:var(--good);border-color:color-mix(in srgb,var(--good) 35%,transparent)}
+/* a tag shows its value in the status colour: the shape goes in front (no alt text: the hidden word
+   after it says the same to a screen reader) */
+.tag.good::before{content:"● ";content:"● " / "";}.tag.warn::before{content:"▲ ";content:"▲ " / "";}.tag.bad::before{content:"■ ";content:"■ " / "";}
+.tag.good::after{content:" (good)"}.tag.warn::after{content:" (fair)"}.tag.bad::after{content:" (poor)"}
+.tag{position:relative}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+label{color:var(--muted);font-size:12px;cursor:pointer}
+.rename{background:none;border:0;color:var(--muted);cursor:pointer;font:inherit;padding:0 4px}
+.rename:hover,.rename:focus-visible{color:var(--accent)}
+input.namebox{background:var(--inset);color:var(--text);border:1px solid var(--accent);border-radius:4px;font:inherit;padding:1px 4px;width:14em;max-width:100%}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-width:600px){:root{--gap:12px}}
+/* live strip: fixed equal columns, each label / value / mini graph, so nothing shifts as values change */
+.live{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;padding:0}
+.livefig{display:grid;grid-template-rows:16px 26px 34px;row-gap:2px;padding:12px 16px;min-width:0;border-left:1px solid var(--line)}
+.livefig:first-child{border-left:0}
+.livefig .k{color:var(--muted);font-size:12px;display:flex;justify-content:space-between;gap:6px;white-space:nowrap}
+.livefig b{font-size:18px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:26px}
+.livefig canvas,.livefig .nospark{width:100%;height:34px;display:block}
+.livefig .k em{font-style:normal;font-size:11px;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.livefig .kpsub{color:var(--muted);font-size:12px;line-height:17px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+#kpis.live{grid-template-columns:repeat(6,minmax(0,1fr))}   /* six headline tiles; the live strip has five */
+@media(max-width:900px){.live,#kpis.live{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .livefig{border-left:0;border-top:1px solid var(--line);padding:10px 12px}.livefig:nth-child(-n+2){border-top:0}
+  .livefig:nth-child(2n){border-left:1px solid var(--line)}
+  .livefig b{font-size:15px}}
+/* tabs: one view per question; the address holds which (see dashboard.js) */
+.tabs{display:flex;gap:2px;padding:0 var(--gap);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:thin}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);padding:10px 14px;font:inherit;cursor:pointer;white-space:nowrap}
+.tabs button[aria-selected="true"]{color:var(--text);border-bottom-color:var(--accent)}
+.tabs button:hover{color:var(--text)}
+.tabpanel{display:grid;gap:var(--gap);min-width:0}
+.tabpanel[hidden]{display:none}
+#banner:empty{display:none}
+/* Overview */
+.verdict b{font-size:20px;line-height:1.3;display:block}
+a.tile{color:inherit;text-decoration:none;cursor:pointer}
+a.tile:hover,a.tile:focus-visible{background:var(--inset);outline:none}
+.timeline{display:grid;grid-template-columns:repeat(96,minmax(0,1fr));gap:1px;height:34px}
+.timeline button{border:0;padding:0;cursor:pointer;background:var(--c,var(--none));border-radius:1px}
+.timeline button.nodata{background:repeating-linear-gradient(45deg,var(--none) 0 2px,transparent 2px 4px)}
+.timeline button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.settings{display:grid;grid-template-columns:max-content minmax(0,320px);gap:8px 14px;align-items:center}
+.settings label{font-size:13px}.settings #set-resolvers-hint{grid-column:2}
+.settings-actions{grid-column:1/-1;display:flex;gap:10px;align-items:center}
+@media(max-width:700px){.settings{grid-template-columns:1fr}.settings #set-resolvers-hint,.settings-actions{grid-column:auto}}
+.filters input,.filters select,#outdays,#repmonth,#usemonth,.settings input{background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;font-size:13px}
+.filters input{flex:1 1 200px;min-width:0}
+@media(max-width:600px){.timeline{grid-template-columns:repeat(24,minmax(0,1fr));grid-auto-rows:26px;height:auto;gap:2px}}
+.attention{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.attention li{display:flex;gap:8px;align-items:baseline}
+.attention a{color:var(--accent);font-size:12px;white-space:nowrap}
+tr.at{outline:1px solid var(--accent);outline-offset:-1px}
+.maplist{list-style:none;margin:0;padding:0}.maplist ul{list-style:none;margin:0;padding:0 0 0 18px;border-left:1px solid var(--line)}
+.maplist li{padding:3px 0}.maplist .sub{color:var(--muted);font-size:12px}
+.hctl{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+#theme{padding:4px 10px}
+#alertsbtn.on{border-color:var(--accent);color:var(--text)}
+#alertsbtn .count:not(:empty){margin-left:4px;font-weight:600}
+.checks{display:flex;flex-direction:column;gap:4px}
+.alertlist{list-style:none;margin:0;padding:0}.alertlist li{margin:0 0 12px;line-height:1.4}
+.alertlist .muted{margin:2px 0 0 15px}.alertlist a{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1><span>●</span> Hearth</h1>
+  <div class="status" id="status">
+    <div class="cell"><span id="st-inc-k">Slowdowns &amp; outages (last hour)</span><b id="st-inc">–</b></div>
+    <div class="cell"><span>Right now</span><b id="st-verdict">–</b></div>
+    <div class="cell"><span>Route to the internet</span><b id="st-route">loading…</b></div>
+  </div>
+  <div class="hctl">
+    <div class="ranges" id="ranges" role="group" aria-label="Time range"></div>
+    <button id="alertsbtn" class="btn" type="button" aria-label="Alerts">Alerts <span id="alertcount" class="count"></span></button>
+    <button id="theme" class="btn" type="button">Light</button>
+  </div>
+</header>
+<!-- one tab per question; the address holds the tab, range and open item (#/history?range=7d) -->
+<nav class="tabs" role="tablist" id="tabs" aria-label="Views"></nav>
+<main>
+  <!-- something that needs you, whatever tab is open (e.g. a mesh change to confirm) -->
+  <div id="banner"></div>
+  <section class="panel live" id="live" aria-live="off">
+    <div class="livefig"><span class="k">Internet <em id="lv-note" title="Live while this page is open: Hearth reads faster only while someone is looking">live</em></span><b id="lv-inet">–</b><canvas id="lv-inet-spark"></canvas></div>
+    <div class="livefig"><span class="k">Router</span><b id="lv-router">–</b><canvas id="lv-router-spark"></canvas></div>
+    <div class="livefig"><span class="k">Download / upload now</span><b id="lv-traffic">–</b><canvas id="lv-traffic-spark"></canvas></div>
+    <div class="livefig"><span class="k">Busiest</span><b id="lv-busy">–</b><div class="nospark"></div></div>
+    <div class="livefig"><span class="k">This computer</span><b id="lv-host">–</b><canvas id="lv-host-spark"></canvas></div>
+  </section>
+
+  <div class="tabpanel" role="tabpanel" id="tab-overview" aria-labelledby="tabbtn-overview">
+    <!-- the answer first: one sentence, decided on the server -->
+    <!-- step 5.3: what's happening in the first minutes; hides once the layout is learned -->
+    <section class="panel" id="welcome" hidden>
+      <div class="ph"><h2>Welcome to Hearth</h2><button class="btn" type="button" id="welcomeclose">Got it</button></div>
+      <p id="welcometext" class="small" style="margin:0"></p>
+    </section>
+    <section class="panel verdict" aria-live="polite"><b id="ov-verdict">–</b></section>
+    <!-- headline figures about now; each opens the tab that explains it -->
+    <section class="panel live" id="kpis" aria-live="off">
+      <a class="livefig tile" data-tab="system" href="#/system"><span class="k">Router <em id="kp-router-note"></em></span><b id="kp-router">–</b><canvas id="kp-router-spark"></canvas></a>
+      <a class="livefig tile" data-tab="history" href="#/history"><span class="k">Internet quality</span><b id="kp-inet">–</b><span class="kpsub" id="kp-inet-sub"></span></a>
+      <a class="livefig tile" data-tab="usage" href="#/usage"><span class="k">Today</span><b id="kp-today">–</b><span class="kpsub" id="kp-today-sub"></span></a>
+      <a class="livefig tile" data-tab="network" href="#/network"><span class="k">Weakest mesh link</span><b id="kp-mesh">–</b><span class="kpsub" id="kp-mesh-sub"></span></a>
+      <a class="livefig tile" data-tab="network" href="#/network"><span class="k">WiFi devices</span><b id="kp-wifi">–</b><span class="kpsub" id="kp-wifi-sub"></span></a>
+      <a class="livefig tile" data-tab="history" href="#/history"><span class="k">Calls <em id="kp-calls-note"></em></span><b id="kp-calls">–</b><canvas id="kp-calls-spark"></canvas></a>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Last 24 hours</h2><span class="muted small">each block is 15 minutes, newest on the right · always the last day, whatever range is chosen</span></div>
+      <div class="timeline" id="ov-timeline" role="group" aria-label="The last 24 hours, 15 minutes per block"></div>
+      <div class="legend small muted"><span><span class="dot good"></span>fine</span><span><span class="dot warn"></span>slow at times</span>
+        <span><span class="dot bad"></span>outage or problem</span><span><span class="dot nodata"></span>not measured</span></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Needs attention</h2></div>
+      <ul class="attention" id="ov-attention"></ul>
+    </section>
+    <!-- step 4.7: last week in a few lines -->
+    <section class="panel">
+      <div class="ph"><h2>Last week</h2><span class="muted small" id="ov-week-dates"></span></div>
+      <div id="ov-week" class="muted small">Not built yet: the first weekly digest is made a few minutes after Hearth starts.</div>
+    </section>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="tab-network" aria-labelledby="tabbtn-network" hidden>
+    <section class="panel">
+      <div class="ph"><h2>Network</h2><span class="muted small" id="mapnote"></span>
+        <button id="maplistbtn" class="btn" type="button" aria-controls="maplist">Show as list</button></div>
+      <div id="meshtrust"></div>
+      <div class="mapscroll" id="mapscroll"><svg id="map" role="group" aria-label="Network map"></svg></div>
+      <!-- the same tree as a list: for screen readers always, and on screen with "Show as list" -->
+      <ul id="maplist" class="maplist sr-only" aria-label="Network as a list"></ul>
+      <div class="legend small muted">
+        <span><span class="dot good"></span>healthy</span><span><span class="dot warn"></span>some lag</span>
+        <span><span class="dot bad"></span>lagging / losing packets</span><span><span class="dot nodata"></span>no data</span>
+        <span>line thickness = internet traffic now</span><span>dashed = wireless</span>
+      </div>
+    </section>
+    <section class="panel" id="meshpanel" hidden>
+      <div class="ph"><h2>Mesh &amp; WiFi</h2><span class="muted small">how well the mesh units and wireless devices are connected</span></div>
+      <div id="meshbody"></div>
+    </section>
+    <section class="panel"><div class="ph"><h2>WiFi radios in range</h2><span class="muted small">airtime busy over ~50% means queuing</span></div>
+      <div class="scroll"><table id="wifi"><thead><tr><th>Radio</th><th>Band</th><th class="num">Ch</th><th class="num">Signal</th><th class="num">Busy</th><th class="num">Clients</th><th>Seen</th></tr></thead><tbody></tbody></table></div></section>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="tab-devices" aria-labelledby="tabbtn-devices" hidden>
+    <section class="panel">
+      <div class="ph"><h2>Devices</h2><span class="muted small" id="devcount"></span></div>
+      <div class="filters" role="search" aria-label="Filter devices">
+        <input type="search" id="devq" placeholder="Search name, address, make…" aria-label="Search devices" maxlength="64" autocomplete="off">
+        <select id="devstate" aria-label="Online or not"><option value="">Online or not</option><option value="on">Online</option><option value="off">Offline</option></select>
+        <select id="devlink" aria-label="Connection"><option value="">Wi-Fi or wired</option><option value="wifi">Wi-Fi</option><option value="wired">Wired</option></select>
+        <select id="devunit" aria-label="Mesh unit or area"><option value="">Any unit</option></select>
+        <span class="muted small" id="devshown" aria-live="polite"></span>
+      </div>
+      <div class="scroll"><table id="dev"><thead><tr><th>Device</th><th>Area</th><th class="num">Latency</th><th class="num">p95</th><th class="num">Loss</th>
+        <th class="num">Now ↓ / ↑</th><th class="num" id="usedhead">Used</th><th>Seen</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="tab-history" aria-labelledby="tabbtn-history" hidden>
+    <section class="panel">
+      <div class="ph"><h2>Latency</h2><label><input type="checkbox" id="logscale" checked> log scale</label></div>
+      <div class="chartbox"><canvas id="lat"></canvas></div>
+      <div class="chartbox small" style="margin-top:12px"><canvas id="loss"></canvas></div>
+    </section>
+    <!-- #101: how calls would have sounded, and how fast DNS answered, over the range -->
+    <section class="panel">
+      <div class="ph"><h2>Calls and DNS</h2><span class="muted small">call rating out of 5 (4 and up is good) · time for each DNS answer</span></div>
+      <div class="chartbox small"><canvas id="qmos" aria-label="Call rating over time"></canvas></div>
+      <div class="chartbox small" style="margin-top:12px"><canvas id="qdns" aria-label="DNS answer time over time"></canvas></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Slowdowns &amp; outages <span class="muted" id="inccount"></span></h2>
+        <label><input type="checkbox" id="showblips"> Show momentary spikes <span id="blipcount"></span></label></div>
+      <div class="scroll"><table id="inc"><thead><tr><th>When</th><th>Length</th><th>What happened</th><th>Details</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <!-- step 4.1: real outages over weeks or months, and the month's ISP report card -->
+    <section class="panel">
+      <div class="ph"><h2>Outages</h2><span class="muted small" id="outsum"></span>
+        <select id="outdays" aria-label="Outages over the last"><option value="7">7 days</option><option value="30" selected>30 days</option>
+          <option value="90">90 days</option><option value="365">a year</option></select></div>
+      <div class="scroll"><table id="outages"><thead><tr><th>When</th><th>Length</th><th>Where</th><th>What happened</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>ISP report card</h2><select id="repmonth" aria-label="Month"></select></div>
+      <div id="report" class="muted small">Loading…</div>
+    </section>
+    <section class="panel"><div class="ph"><h2>Events</h2></div>
+      <div class="scroll"><table id="ev"><thead><tr><th>When</th><th>Event</th></tr></thead><tbody></tbody></table></div></section>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="tab-usage" aria-labelledby="tabbtn-usage" hidden>
+    <section class="panel" id="trafficpanel">
+      <div class="ph"><h2>Internet traffic</h2>
+        <div><span class="muted small" id="usagewhen"></span> <button class="btn" id="usagerefresh" hidden>Refresh now</button></div></div>
+      <div id="trafficbody"></div>
+    </section>
+    <!-- step 4.6: a speed test you start - speed, and how much lag a full line adds -->
+    <section class="panel">
+      <div class="ph"><h2>Speed test</h2><div><span class="muted small" id="stnote"></span>
+        <button class="btn" id="strun" type="button">Run a speed test</button></div></div>
+      <p class="muted small" id="stabout"></p>
+      <div class="scroll"><table id="speedtests"><thead><tr><th>When</th><th class="num">Down</th><th class="num">Up</th>
+        <th>Lag when full</th><th class="num">Idle</th><th class="num">Busy down / up</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <!-- step 4.2: a usage month (from the day your allowance resets) -->
+    <section class="panel">
+      <div class="ph"><h2>Usage this month</h2><select id="usemonth" aria-label="Usage month"></select></div>
+      <div id="usemonthsum" class="muted small">Loading…</div>
+      <div class="chartbox small" style="margin-top:10px"><canvas id="usedays" aria-label="Usage each day"></canvas></div>
+      <div class="scroll" style="margin-top:10px"><table id="usedevs"><thead><tr><th>Device</th><th class="num">Down</th><th class="num">Up</th><th class="num">Share</th></tr></thead><tbody></tbody></table></div>
+    </section>
+  </div>
+
+  <div class="tabpanel" role="tabpanel" id="tab-system" aria-labelledby="tabbtn-system" hidden>
+    <section class="panel" id="hostpanel" hidden>
+      <div class="ph"><h2>This computer</h2><span class="muted small">the machine running Hearth</span></div>
+      <div id="hostbody"></div>
+    </section>
+    <!-- #131: what can reach the home from the internet, and the firmware -->
+    <section class="panel">
+      <div class="ph"><h2>Security</h2><span class="muted small">what can reach your home from the internet, from the router's settings</span></div>
+      <ul class="alertlist" id="security"></ul>
+      <p class="muted small" id="firmware"></p>
+    </section>
+    <!-- step 5.1: what Hearth found, and what's missing -->
+    <section class="panel">
+      <div class="ph"><h2>Setup</h2><span class="muted small">what Hearth found, and what you could add</span></div>
+      <ul class="alertlist" id="setup"></ul>
+      <p class="muted small" id="setup-creds"></p>
+      <!-- step 5.2: shown only when the page is open on the Hearth computer itself -->
+      <form id="credsform" class="settings" hidden autocomplete="off">
+        <label for="cred-router">Router admin password (GL.iNet)</label>
+        <input id="cred-router" type="password" maxlength="128" autocomplete="new-password">
+        <label for="cred-mesh">Deco password (the one the Deco app uses)</label>
+        <input id="cred-mesh" type="password" maxlength="128" autocomplete="new-password">
+        <!-- step 6.2: where alerts are sent; kept with the passwords, never shown back -->
+        <label for="cred-notify">Notification address (ntfy, Discord, Slack or a webhook)</label>
+        <input id="cred-notify" type="text" maxlength="512" spellcheck="false" autocomplete="off" placeholder="https://ntfy.sh/your-hard-to-guess-topic">
+        <label for="cred-notify_2">Second notification address (optional)</label>
+        <input id="cred-notify_2" type="text" maxlength="512" spellcheck="false" autocomplete="off">
+        <label for="cred-notify_token">ntfy access token (only for a protected topic)</label>
+        <input id="cred-notify_token" type="password" maxlength="128" autocomplete="new-password">
+        <div class="checks"><label><input type="checkbox" id="rm-notify"> remove the notification address</label>
+          <label><input type="checkbox" id="rm-notify_2"> remove the second address</label>
+          <label><input type="checkbox" id="rm-notify_token"> remove the ntfy token</label></div>
+        <div class="settings-actions"><button class="btn" type="submit">Save</button>
+          <span id="cred-status" class="small" role="status" aria-live="polite"></span></div>
+      </form>
+      <div class="settings-actions" id="notifytest" hidden><button class="btn" type="button" id="notifytestbtn">Send a test notification</button>
+        <span id="notifytest-status" class="small" role="status" aria-live="polite"></span></div>
+    </section>
+    <!-- step 4.3a: is DNS answering? one question a minute to each resolver -->
+    <section class="panel">
+      <div class="ph"><h2>DNS</h2><span class="muted small">how fast names are looked up: every new site waits for this first</span></div>
+      <div class="scroll"><table id="dns"><thead><tr><th>Resolver</th><th>Status</th><th class="num">Typical</th><th class="num">Slowest 5%</th>
+        <th class="num">Unanswered</th><th>Last answer</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <section class="panel">
+      <div class="ph"><h2>Data sources</h2><span class="muted small">what Hearth reads, and whether each works</span></div>
+      <div class="scroll"><table id="sources"><thead><tr><th>Source</th><th>State</th><th>Details</th></tr></thead><tbody></tbody></table></div>
+    </section>
+    <!-- step 4.5: the settings the page may change (everything else is in config.json) -->
+    <section class="panel">
+      <div class="ph"><h2>Settings</h2><span class="muted small">saved straight away; everything else is in config.json</span></div>
+      <form id="settings" class="settings" novalidate>
+        <label for="set-day">Usage months start on day</label>
+        <input id="set-day" type="number" min="1" max="28" step="1" inputmode="numeric">
+        <label for="set-resolvers">DNS resolvers to check</label>
+        <input id="set-resolvers" type="text" maxlength="120" autocomplete="off" aria-describedby="set-resolvers-hint">
+        <span class="muted small" id="set-resolvers-hint"></span>
+        <label for="set-probe">Name the DNS check looks up</label>
+        <input id="set-probe" type="text" maxlength="253" autocomplete="off">
+        <span>Speed test schedule</span><span id="set-speedtest" class="muted"></span>
+        <span>Alert me about</span>
+        <div class="checks"><label><input type="checkbox" id="set-alert_attention"> anything in "Needs attention"</label>
+          <label><input type="checkbox" id="set-alert_outages"> outages, once they end</label>
+          <label><input type="checkbox" id="set-alert_calls"> calls sounding poor</label>
+          <label><input type="checkbox" id="set-alert_new_devices"> a device Hearth hasn't seen before</label></div>
+        <label for="set-notify_level">Notifications (set up in Setup, above)</label>
+        <select id="set-notify_level"><option value="warn">warnings and problems</option><option value="bad">problems only</option></select>
+        <label for="set-dashboard_url">This dashboard's address, for the link in each notification</label>
+        <input id="set-dashboard_url" type="text" maxlength="80" spellcheck="false" placeholder="http://192.168.1.60:8080">
+        <div class="settings-actions"><button class="btn" type="submit">Save</button>
+          <span id="set-status" class="small" role="status" aria-live="polite"></span></div>
+      </form>
+    </section>
+  </div>
+</main>
+<!-- the side panel for any item (item= in the address); filled by renderPanel -->
+<dialog id="panel" aria-labelledby="panel-title">
+  <button id="panel-close" type="button" aria-label="Close">✕</button>
+  <div class="detail" id="detail"></div>
+</dialog>
+<script src="/dashboard.js"></script>
+</body>
+</html>

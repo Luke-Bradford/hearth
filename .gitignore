@@ -1,0 +1,15 @@
+# runtime data
+hearth.db
+hearth.db-*
+netmon.db
+netmon.db-*
+oui.csv
+oui.csv.part
+__pycache__/
+*.pyc
+
+# local tool settings
+.claude/settings.local.json
+# browser-test screenshots and logs (they show the home network)
+.playwright-mcp/
+backups/

@@ -1,0 +1,148 @@
+# Hearth -> Home Assistant
+#
+# Copy this block into Home Assistant's configuration.yaml (File editor app), replace HEARTH
+# with the address of the machine running Hearth, then Settings > Tools > YAML >
+# Check configuration, and restart.
+#
+# Gives you: Network verdict (one sentence), Internet connected (on/off), Internet latency,
+# Router latency, Packet loss,
+# Network route, Network incidents (slowdowns & outages in the last hour), Last network
+# incident, and Hearth data sources failing (0 when every set-up source works). If Hearth can
+# read your router, also internet download/upload speed, data used today, and the router's
+# temperature and uptime.
+#
+# Numeric sensors have an `availability` template: Hearth reports null when it has no
+# reading yet (e.g. just after a restart or a network change). Without it, Home Assistant
+# receives the text "None" for a numeric sensor and rejects it with a ValueError.
+
+rest:
+  - resource: http://HEARTH:8080/api/status
+    scan_interval: 30
+    timeout: 15
+    binary_sensor:
+      - name: "Internet connected"
+        unique_id: hearth_internet_up
+        device_class: connectivity
+        # no pings in the last 15 s (e.g. Hearth restarting) is "unavailable", not "disconnected"
+        availability: "{{ value_json.internet_measured }}"
+        value_template: "{{ value_json.internet_up }}"
+    sensor:
+      - name: "Internet latency"
+        unique_id: hearth_internet_ms
+        unit_of_measurement: "ms"
+        state_class: measurement
+        availability: "{{ value_json.internet_ms is not none }}"
+        value_template: "{{ value_json.internet_ms }}"
+      - name: "Internet latency p95"
+        unique_id: hearth_internet_p95_ms
+        unit_of_measurement: "ms"
+        state_class: measurement
+        availability: "{{ value_json.internet_p95_ms is not none }}"
+        value_template: "{{ value_json.internet_p95_ms }}"
+      - name: "Router latency"
+        unique_id: hearth_router_ms
+        unit_of_measurement: "ms"
+        state_class: measurement
+        availability: "{{ value_json.router_ms is not none }}"
+        value_template: "{{ value_json.router_ms }}"
+      - name: "Internet packet loss"
+        unique_id: hearth_loss_pct
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: "{{ value_json.loss_pct_5m is not none }}"
+        value_template: "{{ value_json.loss_pct_5m }}"
+      # internet traffic read from the router (needs Hearth's router credentials file)
+      - name: "Internet download speed"
+        unique_id: hearth_down_mbps
+        unit_of_measurement: "Mbit/s"
+        device_class: data_rate
+        state_class: measurement
+        availability: "{{ value_json.down_mbps is not none }}"
+        value_template: "{{ value_json.down_mbps }}"
+      - name: "Internet upload speed"
+        unique_id: hearth_up_mbps
+        unit_of_measurement: "Mbit/s"
+        device_class: data_rate
+        state_class: measurement
+        availability: "{{ value_json.up_mbps is not none }}"
+        value_template: "{{ value_json.up_mbps }}"
+      - name: "Internet downloaded today"
+        unique_id: hearth_today_down_gb
+        unit_of_measurement: "GB"
+        device_class: data_size
+        state_class: total_increasing
+        availability: "{{ value_json.today_down_gb is not none }}"
+        value_template: "{{ value_json.today_down_gb }}"
+      - name: "Internet uploaded today"
+        unique_id: hearth_today_up_gb
+        unit_of_measurement: "GB"
+        device_class: data_size
+        state_class: total_increasing
+        availability: "{{ value_json.today_up_gb is not none }}"
+        value_template: "{{ value_json.today_up_gb }}"
+      # the router's own health (needs the same credentials file; GL.iNet firmware 4.x)
+      - name: "Router temperature"
+        unique_id: hearth_router_temp_c
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        availability: "{{ value_json.router_temp_c is not none }}"
+        value_template: "{{ value_json.router_temp_c }}"
+      - name: "Router uptime"
+        unique_id: hearth_router_uptime_s
+        unit_of_measurement: "s"
+        device_class: duration
+        state_class: measurement
+        availability: "{{ value_json.router_uptime_s is not none }}"
+        value_template: "{{ value_json.router_uptime_s }}"
+      # the computer running Hearth
+      - name: "Hearth computer CPU"
+        unique_id: hearth_host_cpu
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: "{{ value_json.host_cpu_pct is not none }}"
+        value_template: "{{ value_json.host_cpu_pct }}"
+      - name: "Hearth computer reserved memory"
+        unique_id: hearth_host_commit_pct
+        unit_of_measurement: "%"
+        state_class: measurement
+        availability: "{{ value_json.host_commit_pct is not none }}"
+        value_template: "{{ value_json.host_commit_pct }}"
+      - name: "Hearth computer problems"
+        unique_id: hearth_host_warnings
+        state_class: measurement
+        availability: "{{ value_json.host_warnings is not none }}"
+        value_template: "{{ value_json.host_warnings }}"
+      - name: "Network verdict"
+        unique_id: hearth_verdict
+        value_template: "{{ value_json.verdict or 'unknown' }}"
+      - name: "Network route"
+        unique_id: hearth_path
+        value_template: "{{ value_json.path }}"
+      # slowdowns and outages (episodes) in the last hour. It used to count incidents_1h, every
+      # 1-second spike cluster; that field is deprecated and will be removed in step 3 of the
+      # redesign. The unique_id is unchanged, so Home Assistant keeps this sensor's history.
+      - name: "Network incidents last hour"
+        unique_id: hearth_incidents_1h
+        state_class: measurement
+        value_template: "{{ value_json.episodes_1h }}"
+      - name: "Last network incident"
+        unique_id: hearth_last_incident
+        value_template: "{{ value_json.last_episode or 'none' }}"
+      # how many of Hearth's data sources that are set up (router, mesh, UPnP, saved history)
+      # are failing right now: 0 when all is well
+      - name: "Hearth data sources failing"
+        unique_id: hearth_sources_failing
+        state_class: measurement
+        availability: "{{ value_json.sources_failing is defined and value_json.sources_failing is not none }}"
+        value_template: "{{ value_json.sources_failing }}"
+      # alerts (Hearth's Settings choose which kinds): how many are active, and the newest thing
+      # to tell you. Notify from these with a Home Assistant automation until Hearth sends alerts itself
+      - name: "Hearth alerts active"
+        unique_id: hearth_alerts_active
+        state_class: measurement
+        availability: "{{ value_json.alerts_active is defined }}"
+        value_template: "{{ value_json.alerts_active }}"
+      - name: "Hearth latest alert"
+        unique_id: hearth_alert_latest
+        value_template: "{{ (value_json.alert_latest or 'nothing to tell you')[:255] }}"
